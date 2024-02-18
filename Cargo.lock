@@ -155,5 +155,6 @@ name = "vl53l1x-async"
 version = "0.1.0"
 dependencies = [
  "defmt",
+ "embedded-hal",
  "embedded-hal-async",
 ]
