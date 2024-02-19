@@ -2,6 +2,10 @@
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<T> {
     I2CError(T),
+    DisableFailed,
+    EnableFailed,
+    WrongSensorModel,
+    Timout,
     Other,
 }
 
