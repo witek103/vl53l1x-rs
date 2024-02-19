@@ -16,4 +16,6 @@ embedded-hal-async = "1.0.0"
 defmt = { version = "0.3.6", optional = true}
 
 [features]
+default = ["io_2v8"]
+io_2v8 = []
 defmt = ["dep:defmt"]

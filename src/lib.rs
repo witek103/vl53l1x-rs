@@ -1,5 +1,6 @@
 #![no_std]
 
+mod default_configuration;
 pub mod error;
 pub mod no_x_shut;
 pub mod register_map;
@@ -59,6 +60,38 @@ where
             .await?;
 
         Ok(buf[0])
+    }
+
+    pub async fn write_register(
+        &mut self,
+        register: RegisterMap,
+        value: u8,
+    ) -> Result<(), Error<I2C::Error>> {
+        let dest = (register as u16).to_be_bytes();
+
+        self.dev
+            .write(self.address, &[dest[0], dest[1], value])
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn write_multiple(
+        &mut self,
+        register_begin: RegisterMap,
+        buf: &[u8],
+    ) -> Result<(), Error<I2C::Error>> {
+        let dest_begin = register_begin as u16;
+
+        for (offset, value) in buf.iter().enumerate() {
+            let dest = (dest_begin + offset as u16).to_be_bytes();
+
+            self.dev
+                .write(self.address, &[dest[0], dest[1], *value])
+                .await?
+        }
+
+        Ok(())
     }
 
     pub async fn get_model_id(&mut self) -> Result<u8, Error<I2C::Error>> {
@@ -152,6 +185,88 @@ where
 
         #[cfg(feature = "defmt")]
         defmt::trace!("Sensor at {} booted correctly", self.address);
+
+        Ok(())
+    }
+
+    /// Start continuous ranging
+    pub async fn start_ranging(&mut self) -> Result<(), Error<I2C::Error>> {
+        #[cfg(feature = "defmt")]
+        defmt::trace!("Start ranging on sensor at {}", self.address);
+
+        self.write_register(RegisterMap::SystemModeStart, 0x40)
+            .await
+    }
+
+    pub async fn stop_ranging(&mut self) -> Result<(), Error<I2C::Error>> {
+        #[cfg(feature = "defmt")]
+        defmt::trace!("Stop ranging on sensor at {}", self.address);
+
+        self.write_register(RegisterMap::SystemModeStart, 0x00)
+            .await
+    }
+
+    /// Must be called after reading ranging data in order to trigger next measurement
+    pub async fn clear_interrupt(&mut self) -> Result<(), Error<I2C::Error>> {
+        self.write_register(RegisterMap::SystemInterruptClear, 0x01)
+            .await
+    }
+
+    /// Poll for pending ranging data
+    pub async fn data_ready(&mut self) -> Result<bool, Error<I2C::Error>> {
+        let gpio_hv_mux_ctrl = self.read_register(RegisterMap::GpioHvMuxCtrl).await?;
+
+        let interrupt_polarity_low = gpio_hv_mux_ctrl & (1 << 4) == 1 << 4;
+
+        let gpio_tio_hv_status = self.read_register(RegisterMap::GpioTioHvStatus).await?;
+
+        let data_ready_bit_low = gpio_tio_hv_status & 0x01 == 0x00;
+
+        Ok(interrupt_polarity_low == data_ready_bit_low)
+    }
+
+    pub async fn init(
+        &mut self,
+        delay: &mut impl DelayNs,
+        timeout_ms: u32,
+    ) -> Result<(), Error<I2C::Error>> {
+        #[cfg(feature = "defmt")]
+        defmt::trace!("Initializing sensor at {}", self.address);
+
+        self.write_multiple(
+            RegisterMap::DefaultConfigBegin,
+            &default_configuration::DEFAULT_CONFIGURATION,
+        )
+        .await?;
+
+        self.start_ranging().await?;
+
+        let mut time_passed_ms = 0;
+
+        loop {
+            delay.delay_ms(1).await;
+
+            time_passed_ms += 1;
+
+            if self.data_ready().await? {
+                break;
+            }
+
+            if time_passed_ms > timeout_ms {
+                return Err(Error::Timout);
+            }
+        }
+
+        self.clear_interrupt().await?;
+        self.stop_ranging().await?;
+
+        self.write_register(RegisterMap::VhvConfigTimeoutMacropLoopBound, 0x09)
+            .await?;
+        self.write_register(RegisterMap::VhvConfigInit, 0x00)
+            .await?;
+
+        #[cfg(feature = "defmt")]
+        defmt::trace!("Sensor at {} initialized", self.address);
 
         Ok(())
     }
