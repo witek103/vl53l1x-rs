@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod error;
 pub mod no_x_shut;
 pub mod register_map;
 
@@ -7,6 +8,8 @@ use embedded_hal::digital::OutputPin;
 use embedded_hal_async::i2c::{I2c, SevenBitAddress};
 use no_x_shut::NoXShut;
 use register_map::RegisterMap;
+
+pub use error::Error;
 
 const I2C_ADDR_DEFAULT: SevenBitAddress = 0x29;
 
@@ -44,7 +47,7 @@ where
     I2C: I2c,
     XShut: OutputPin,
 {
-    pub async fn read_register(&mut self, register: RegisterMap) -> Result<u8, I2C::Error> {
+    pub async fn read_register(&mut self, register: RegisterMap) -> Result<u8, Error<I2C::Error>> {
         let mut buf = [0; 1];
 
         self.dev
@@ -54,16 +57,16 @@ where
         Ok(buf[0])
     }
 
-    pub async fn get_model_id(&mut self) -> Result<u8, I2C::Error> {
+    pub async fn get_model_id(&mut self) -> Result<u8, Error<I2C::Error>> {
         self.read_register(RegisterMap::ModelId).await
     }
 
-    pub async fn get_model_type(&mut self) -> Result<u8, I2C::Error> {
+    pub async fn get_model_type(&mut self) -> Result<u8, Error<I2C::Error>> {
         self.read_register(RegisterMap::ModelType).await
     }
 
     /// Bit 0 is low when device is not yet booted, high after boot.
-    pub async fn get_boot_state(&mut self) -> Result<u8, I2C::Error> {
+    pub async fn get_boot_state(&mut self) -> Result<u8, Error<I2C::Error>> {
         self.read_register(RegisterMap::SystemStatus).await
     }
 }
