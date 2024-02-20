@@ -9,7 +9,7 @@ use embedded_hal::digital::OutputPin;
 use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::i2c::{I2c, SevenBitAddress};
 use no_x_shut::NoXShut;
-use register_map::RegisterMap;
+use register_map::{DistanceMode, RegisterMap, TimingBudget};
 
 pub use error::Error;
 
@@ -61,6 +61,18 @@ where
 
         Ok(buf[0])
     }
+    pub async fn read_register_word(
+        &mut self,
+        register: RegisterMap,
+    ) -> Result<u16, Error<I2C::Error>> {
+        let mut buf = [0; 2];
+
+        self.dev
+            .write_read(self.address, &(register as u16).to_be_bytes(), &mut buf)
+            .await?;
+
+        Ok(u16::from_be_bytes(buf))
+    }
 
     pub async fn write_register(
         &mut self,
@@ -71,6 +83,39 @@ where
 
         self.dev
             .write(self.address, &[dest[0], dest[1], value])
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn write_register_u16(
+        &mut self,
+        register: RegisterMap,
+        value: u16,
+    ) -> Result<(), Error<I2C::Error>> {
+        let dest = (register as u16).to_be_bytes();
+        let value = value.to_be_bytes();
+
+        self.dev
+            .write(self.address, &[dest[0], dest[1], value[0], value[1]])
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn write_register_u32(
+        &mut self,
+        register: RegisterMap,
+        value: u32,
+    ) -> Result<(), Error<I2C::Error>> {
+        let dest = (register as u16).to_be_bytes();
+        let value = value.to_be_bytes();
+
+        self.dev
+            .write(
+                self.address,
+                &[dest[0], dest[1], value[0], value[1], value[2], value[3]],
+            )
             .await?;
 
         Ok(())
@@ -269,5 +314,122 @@ where
         defmt::trace!("Sensor at {} initialized", self.address);
 
         Ok(())
+    }
+
+    pub async fn set_interrupt_polarity(
+        &mut self,
+        active_high: bool,
+    ) -> Result<(), Error<I2C::Error>> {
+        let gpio_hv_mux_ctrl = self.read_register(RegisterMap::GpioHvMuxCtrl).await?;
+
+        let polarity_bit = if active_high { 0 } else { 1 };
+
+        self.write_register(
+            RegisterMap::GpioHvMuxCtrl,
+            (gpio_hv_mux_ctrl & 0xEF) | (polarity_bit << 4),
+        )
+        .await
+    }
+
+    pub async fn get_timing_budget(&mut self) -> Result<TimingBudget, Error<I2C::Error>> {
+        let distance_mode = self.get_distance_mode().await?;
+
+        let timeout_macrop_a_hi = self
+            .read_register_word(RegisterMap::RangeConfigTimeoutMacropAHi)
+            .await?;
+
+        let timing_budget =
+            TimingBudget::from_timeout_macrop_a_hi(&distance_mode, timeout_macrop_a_hi)
+                .map_err(|_| Error::InvalidTimingBudget)?;
+
+        Ok(timing_budget)
+    }
+
+    pub async fn set_timing_budget(
+        &mut self,
+        timing_budget: TimingBudget,
+    ) -> Result<(), Error<I2C::Error>> {
+        let distance_mode = self.get_distance_mode().await?;
+
+        let timeout_macrop_a_hi = timing_budget
+            .get_timeout_macrop_a_hi(&distance_mode)
+            .map_err(|_| Error::InvalidTimingBudget)?;
+        let timeout_macrop_b_hi = timing_budget
+            .get_timeout_macrop_b_hi(&distance_mode)
+            .map_err(|_| Error::InvalidTimingBudget)?;
+
+        self.write_register_u16(
+            RegisterMap::RangeConfigTimeoutMacropAHi,
+            timeout_macrop_a_hi,
+        )
+        .await?;
+        self.write_register_u16(
+            RegisterMap::RangeConfigTimeoutMacropBHi,
+            timeout_macrop_b_hi,
+        )
+        .await
+    }
+
+    pub async fn set_distance_mode(
+        &mut self,
+        distance_mode: DistanceMode,
+    ) -> Result<(), Error<I2C::Error>> {
+        let timing_budget = self.get_timing_budget().await?;
+
+        let (
+            timeout_macrop,
+            vcsel_period_a,
+            vcsel_period_b,
+            valid_phase_high,
+            woi_sd0,
+            initial_phase_sd0,
+        ) = match distance_mode {
+            DistanceMode::Short => (0x14, 0x07, 0x05, 0x38, 0x0705, 0x0606),
+            DistanceMode::Long => (0x0A, 0x0F, 0x0D, 0xB8, 0x0F0D, 0x0E0E),
+        };
+
+        self.write_register(RegisterMap::PhasecalConfigTimeoutMacrop, timeout_macrop)
+            .await?;
+        self.write_register(RegisterMap::RangeConfigVcselPeriodA, vcsel_period_a)
+            .await?;
+        self.write_register(RegisterMap::RangeConfigVcselPeriodB, vcsel_period_b)
+            .await?;
+        self.write_register(RegisterMap::RangeConfigValidPhaseHigh, valid_phase_high)
+            .await?;
+        self.write_register_u16(RegisterMap::SdConfigWoiSd0, woi_sd0)
+            .await?;
+        self.write_register_u16(RegisterMap::SdConfigInitialPhaseSd0, initial_phase_sd0)
+            .await?;
+
+        self.set_timing_budget(timing_budget).await
+    }
+
+    pub async fn get_distance_mode(&mut self) -> Result<DistanceMode, Error<I2C::Error>> {
+        let timeout_macrop = self
+            .read_register(RegisterMap::PhasecalConfigTimeoutMacrop)
+            .await?;
+
+        let distance_mode = match timeout_macrop {
+            0x14 => DistanceMode::Short,
+            0x0A => DistanceMode::Long,
+            _ => return Err(Error::InvalidDistanceMode),
+        };
+
+        Ok(distance_mode)
+    }
+
+    /// Caution: period must be equal or less than timing budget
+    pub async fn set_inter_measurement_period(
+        &mut self,
+        period_ms: u16,
+    ) -> Result<(), Error<I2C::Error>> {
+        let clock_pll = self
+            .read_register_word(RegisterMap::ResultOscCalibrateVal)
+            .await?;
+
+        let period = (clock_pll & 0x3FF) as f64 * period_ms as f64 * 1.075;
+
+        self.write_register_u32(RegisterMap::SystemIntermeasurementPeriod, period as u32)
+            .await
     }
 }

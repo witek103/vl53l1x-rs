@@ -6,6 +6,8 @@ pub enum Error<T> {
     EnableFailed,
     WrongSensorModel,
     Timout,
+    InvalidTimingBudget,
+    InvalidDistanceMode,
     Other,
 }
 
