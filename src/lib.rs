@@ -432,4 +432,10 @@ where
         self.write_register_u32(RegisterMap::SystemIntermeasurementPeriod, period as u32)
             .await
     }
+
+    /// Get latest measurement data - returned distance is in millimeters
+    pub async fn get_distance(&mut self) -> Result<u16, Error<I2C::Error>> {
+        self.read_register_word(RegisterMap::ResultFinalCrosstalkCorrectedRangeMmSd0)
+            .await
+    }
 }

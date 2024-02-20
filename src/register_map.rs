@@ -18,6 +18,7 @@ pub enum RegisterMap {
     SdConfigInitialPhaseSd0 = 0x007A,
     SystemInterruptClear = 0x0086,
     SystemModeStart = 0x0087,
+    ResultFinalCrosstalkCorrectedRangeMmSd0 = 0x0096,
     ResultOscCalibrateVal = 0x00DE,
     SystemStatus = 0x00E5,
     ModelId = 0x010F,
