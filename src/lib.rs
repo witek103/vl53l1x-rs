@@ -438,4 +438,28 @@ where
         self.read_register_word(RegisterMap::ResultFinalCrosstalkCorrectedRangeMmSd0)
             .await
     }
+
+    pub async fn change_address(
+        &mut self,
+        address: SevenBitAddress,
+    ) -> Result<(), Error<I2C::Error>> {
+        self.write_register(RegisterMap::I2cSlaveDeviceAddress, address)
+            .await?;
+
+        self.address = address;
+
+        let model_id = self
+            .get_model_id()
+            .await
+            .map_err(|_| Error::AddressChangeFailed)?;
+
+        if model_id != MODEL_ID {
+            return Err(Error::WrongSensorModel);
+        }
+
+        #[cfg(feature = "defmt")]
+        defmt::trace!("Sensor address changed to {}", self.address);
+
+        Ok(())
+    }
 }

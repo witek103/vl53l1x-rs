@@ -8,6 +8,7 @@ pub enum Error<T> {
     Timout,
     InvalidTimingBudget,
     InvalidDistanceMode,
+    AddressChangeFailed,
     Other,
 }
 

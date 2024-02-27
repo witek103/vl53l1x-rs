@@ -2,6 +2,7 @@
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum RegisterMap {
+    I2cSlaveDeviceAddress = 0x0001,
     VhvConfigTimeoutMacropLoopBound = 0x0008,
     VhvConfigInit = 0x000B,
     DefaultConfigBegin = 0x002D,
